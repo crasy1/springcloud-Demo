@@ -1,0 +1,33 @@
+plugins {
+    id 'org.springframework.boot' version '2.1.3.RELEASE'
+    id 'java'
+}
+
+ext {
+    springcloud = '2.1.1.RELEASE'
+    lombok = '1.18.6'
+    fastjson = '1.2.57'
+}
+
+group 'com.smkj'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+
+apply plugin: 'java'
+apply plugin: 'idea'
+
+allprojects {
+    repositories {
+        maven { url "http://maven.aliyun.com/nexus/content/groups/public/" }
+        jcenter()
+        mavenCentral()
+    }
+}
+
+dependencies {
+//    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+//    compile group: 'org.springframework.cloud', name: 'spring-cloud-starter', version: rootProject.ext.springcloud
+//    compile group: 'com.alibaba', name: 'fastjson', version: rootProject.ext.fastjson
+//    compile group: 'org.projectlombok', name: 'lombok', version: rootProject.ext.lombok
+}
