@@ -1,0 +1,19 @@
+server:
+  port: 8889
+
+eureka:
+  instance:
+#    hostname: localhost
+    prefer-ip-address: true
+  client:
+    #表示是否注册Eureka服务器,因为自身作为服务注册中心，所以为false
+    registerWithEureka: false
+    #是否从eureka上获取注册信息,表明自己是一个server
+    fetchRegistry: false
+    serviceUrl:
+      defultZone: http://localhost:8889/eureka/,http://localhost:8890/eureka/
+#      defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+
+spring:
+  application:
+    name: eurka-server

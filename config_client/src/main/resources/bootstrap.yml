@@ -1,0 +1,30 @@
+#bootstrap.yml加载会先于application.yml
+server:
+  port: 8881
+spring:
+  application:
+    name: config-client
+  cloud:
+    bus:
+      enabled: true
+      trace:
+        enabled: true
+    config:
+      label: master
+      profile: dev
+#      uri: http://localhost:8888/
+      discovery:
+        enabled: true
+        serviceId: config-server
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: admin
+    password: 123456
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka/
+#      defaultZone: http://localhost:8889/eureka/
+
+management.endpoints.web.exposure.include: bus-refresh

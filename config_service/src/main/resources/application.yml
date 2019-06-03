@@ -8,10 +8,10 @@ spring:
       label: master
       server:
         git:
-          uri: https://github.com/crasy1/springcloudDemo/
+          uri: https://github.com/crasy1/springcloudConfig/
           searchPaths: respo
           username:
           password:
 
-
-
+eureka.client.serviceUrl.defaultZone: http://localhost:8761/eureka/
+#eureka.client.serviceUrl.defaultZone: http://localhost:8889/eureka/
