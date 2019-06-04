@@ -1,4 +1,5 @@
 #springcloud 学习
+[https://blog.csdn.net/forezp/article/details/70148833](https://blog.csdn.net/forezp/article/details/70148833)
 ---
 ## 一.创建服务注册中心[https://blog.csdn.net/forezp/article/details/81040925](https://blog.csdn.net/forezp/article/details/81040925 "服务注册")
 采用Eureka作为服务注册与发现的组件
@@ -811,6 +812,527 @@ rest+ribbon
 		    serviceUrl:
 		      defaultZone: http://Server1.ip:server1.port/eureka/,http://Server2.ip:server2.port/eureka/,http://Server3.ip:server3.port/eureka/
 	
-
+## 十一.docker部署spring cloud项目
+[https://blog.csdn.net/forezp/article/details/70198649](https://blog.csdn.net/forezp/article/details/70198649)
 
 		
+## 十二.断路器监控
+[https://blog.csdn.net/forezp/article/details/81041113](https://blog.csdn.net/forezp/article/details/81041113)
+`Hystrix Dashboard`  
+### `Hystrix Dashboard`简介
+在微服务架构中为例保证程序的可用性，防止程序出错导致网络阻塞，出现了断路器模型.断路器的状况反应了一个程序的可用性和健壮性，它是一个重要指标.Hystrix Dashboard是作为断路器状态的一个组件，提供了数据监控和友好的图形化界面.
+
+1. 改造`eureka-client`
+
+		
+		dependencies {
+		    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+		    implementation 'org.springframework.boot:spring-boot-starter-web'
+		    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+		    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+		    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-hystrix'
+		    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-hystrix-dashboard'
+		}
+ `application.yml`
+
+		server:
+		  port: 8762
+		
+		spring:
+		  application:
+		    name: eureka-client
+		
+		eureka:
+		  client:
+		    serviceUrl:
+		#      defaultZone: http://peer1:8761/eureka/
+		      defaultZone: http://localhost:8761/eureka/,http://localhost:8889/eureka/,http://localhost:8890/eureka/
+		
+		management:
+		  endpoints:
+		    web:
+		      exposure:
+		        include: "*"
+		      cors:
+		        allowed-origins: "*"
+		        allowed-methods: "*"
+	启动类,`@EnableHystrix`注解开启断路器，这个是必须的，并且需要在程序中声明断路点`@HystrixCommand`；加上`@EnableHystrixDashboard`注解，开启`HystrixDashboard`
+
+		@EnableHystrix
+		@EnableEurekaClient
+		@SpringBootApplication
+		@EnableDiscoveryClient
+		@EnableHystrixDashboard
+		@EnableCircuitBreaker
+		public class EurekaClientApplication {
+		
+		    public static void main(String[] args) {
+		        SpringApplication.run(EurekaClientApplication.class, args);
+		    }
+		
+		}
+
+	`controller`
+
+		@RestController
+		public class TestController {
+		    @Value("${server.port}")
+		    String port;
+		
+		    @HystrixCommand(fallbackMethod = "hiError")
+		    @RequestMapping("/hi")
+		    public String home(@RequestParam(value = "name", defaultValue = "forezp") String name) {
+		        return "hi " + name + " ,i am from port:" + port;
+		    }
+		
+		    public String hiError(String name){
+		        return "error";
+		    }
+		}
+
+
+	运行程序： 依次开启`eureka-server` 和`eureka-client`.
+
+2. `Hystrix Dashboard`图形展示,打开[http://localhost:8762/actuator/hystrix.stream](http://localhost:8762/actuator/hystrix.stream) 会一直显示 `ping`,需要先访问 [http://localhost:8762/hi?name=forezp](http://localhost:8762/hi?name=forezp),再打开就会出现一些数据,访问[localhost:8762/hystrix](localhost:8762/hystrix)可以看到一个图形界面.在界面依次输入：`http://localhost:8762/actuator/hystrix.stream` 、`2000` 、`miya`；点确定会跳转到图形界面
+
+## 十三.断路器聚合监控
+`Hystrix Turbine`
+[https://blog.csdn.net/forezp/article/details/70233227](https://blog.csdn.net/forezp/article/details/70233227)  
+看单个的`Hystrix Dashboard`的数据并没有什么多大的价值，要想看这个系统的`Hystrix Dashboard`数据就需要用到`Hystrix Turbine`。`Hystrix Turbine`将每个服务`Hystrix Dashboard`数据进行了整合。`Hystrix Turbine`的使用非常简单，只需要引入相应的依赖和加上注解和配置就可以了
+
+1. 新建`service-turbine`模块,依赖
+
+		dependencies {
+		    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+		    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-turbine'
+		    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+		}
+2. 启动类加`@EnableTurbine`，开启`turbine`  
+3. `yml`
+
+		spring:
+		  application.name: service-turbine
+		server:
+		  port: 8769
+		#security:
+		#  basic:
+		#    enabled: false
+		turbine:
+		  aggregator:
+		    clusterConfig: default   # 指定聚合哪些集群，多个使用","分割，默认为default。可使用http://.../turbine.stream?cluster={clusterConfig之一}访问
+		  appConfig: eureka-client,eureka-client2  # 配置Eureka中的serviceId列表，表明监控哪些服务
+		  clusterNameExpression: new String("default")
+		  # 1. clusterNameExpression指定集群名称，默认表达式appName；此时：turbine.aggregator.clusterConfig需要配置想要监控的应用名称
+		  # 2. 当clusterNameExpression: default时，turbine.aggregator.clusterConfig可以不写，因为默认就是default
+		  # 3. 当clusterNameExpression: metadata['cluster']时，假设想要监控的应用配置了eureka.instance.metadata-map.cluster: ABC，则需要配置，同时turbine.aggregator.clusterConfig: ABC
+		eureka:
+		  client:
+		    serviceUrl:
+		      defaultZone: http://localhost:8761/eureka/
+
+4. 新建`service-client2`和`service-client`的配置差不多
+5. `eureka-server`、`service-client`、`service-client2`、`service-turbine`,打开浏览器输入[http://localhost:8769/turbine.stream](http://localhost:8769/turbine.stream),请求[http://localhost:8762/hi?name=forezp](http://localhost:8762/hi?name=forezp)和[http://localhost:8759/hi?name=forezp](http://localhost:8759/hi?name=forezp),打开[http://localhost:8762/hystrix](http://localhost:8762/hystrix),输入监控流`http://localhost:8769/turbine.stream`点击`monitor stream`进入图形界面,发现页面聚合了2个`service`的`hystrix dashbord`数据。
+
+## Spring Cloud Gateway初体验
+官方文档[https://cloud.spring.io/spring-cloud-static/spring-cloud-gateway/2.0.0.RELEASE/single/spring-cloud-gateway.html](https://cloud.spring.io/spring-cloud-static/spring-cloud-gateway/2.0.0.RELEASE/single/spring-cloud-gateway.html "gateway官方文档")
+Spring Cloud Gateway是Spring Cloud官方推出的第二代网关框架，取代Zuul网关。网关作为流量的，在微服务系统中有着非常作用，网关常见的功能有路由转发、权限校验、限流控制等作用
+[https://blog.csdn.net/forezp/article/details/83792388](https://blog.csdn.net/forezp/article/details/83792388)  
+官方案例 [https://github.com/spring-guides/gs-gateway](https://github.com/spring-guides/gs-gateway)
+
+1. 创建`gateway-first-sight`模块,依赖
+
+	dependencies {
+	    implementation 'org.springframework.cloud:spring-cloud-starter-gateway'
+	    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-hystrix'
+	    compileOnly 'org.projectlombok:lombok'
+	    annotationProcessor 'org.projectlombok:lombok'
+	    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	    testImplementation 'org.springframework.cloud:spring-cloud-starter-contract-stub-runner'
+	}
+2. **创建一个简单的路由**  
+	新建`GatewayController`
+
+		@RestController
+		public class GatewayController {
+		    @Bean
+		    public RouteLocator myRoutes(RouteLocatorBuilder builder) {
+		        return builder.routes()
+		                .route(p -> p
+		                        .path("/get")
+		                        .filters(f -> f.addRequestHeader("Hello", "World"))
+		                        .uri("http://httpbin.org:80"))
+		                .build();
+		    }
+		}
+3.在`spring cloud gateway`中使用`RouteLocator`的`Bean`进行路由转发，将请求进行处理，最后转发到目标的下游服务。在本案例中，会将请求转发到`http://httpbin.org:80`这个地址上.  
+在上面的`myRoutes`方法中，使用了一个`RouteLocatorBuilder`的`bean`去创建路由，除了创建路由`RouteLocatorBuilder`可以让你添加各种`predicates`和`filters`，`predicates`断言的意思，顾名思义就是根据具体的请求的规则，由具体的`route`去处理，`filters`是各种过滤器，用来对请求做各种判断和修改.  
+上面创建的`route`可以让请求`/get`请求都转发到`http://httpbin.org/get`.在route配置上，我们添加了一个`filter`，该`filter`会将请求添加一个`header`,`key`为`hello`，`value`为`world`.启动项目,访问[http://localhost:8080/get](http://localhost:8080/get)
+
+		{
+			args: { },
+			headers: {
+				Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3",
+				Accept-Encoding: "gzip, deflate, br",
+				Accept-Language: "zh-CN,zh;q=0.9",
+				Cookie: "Idea-dd3bbdc1=7eefd86d-8ecd-4ba1-96df-78765851c0e8",
+				Forwarded: "proto=http;host="localhost:8080";for="0:0:0:0:0:0:0:1:14279"",
+				Hello: "World",
+				Host: "httpbin.org",
+				Upgrade-Insecure-Requests: "1",
+				User-Agent: "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
+				X-Forwarded-Host: "localhost:8080"
+			},
+			origin: "0:0:0:0:0:0:0:1, 125.123.239.14, ::1",
+			url: "https://localhost:8080/get"
+		}
+
+	可见当我们向`gateway`工程请求`/get`,`gateway`会将工程的请求转发到`http://httpbin.org/get`，并且在转发之前，加上一个`filter`，该`filter`会将请求添加一个`header`,`key`为`hello`，`value`为`world`.
+
+	注意`HTTPBin`展示了请求的`header` `hello`和值`world`
+### 使用Hystrix
+在`spring cloud gateway`中可以使用`Hystrix`,`Hystrix`是 `spring cloud`中一个服务熔断降级的组件，在微服务系统有着十分重要的作用.
+`Hystrix`是 `spring cloud gateway`中是以`filter`的形式使用的
+
+		@Bean
+		    public RouteLocator myRoutes(RouteLocatorBuilder builder) {
+		        String httpUri = "http://httpbin.org:80";
+		        return builder.routes()
+		                .route(p -> p
+		                        .path("/get")
+		                        .filters(f -> f.addRequestHeader("Hello", "World"))
+		                        .uri(httpUri))
+		                .route(p -> p
+		                        .host("*.hystrix.com")
+		                        .filters(f -> f
+		                                .hystrix(config -> config
+		                                        .setName("mycmd")
+		                                        .setFallbackUri("forward:/fallback")))
+		                        .uri(httpUri))
+		                .build();
+		    }
+		
+		    @RequestMapping("/fallback")
+		    public Mono<String> fallback() {
+		        return Mono.just("fallback");
+		    }
+
+上面的代码中，我们使用了另外一个`router`，该`router`使用`host`去断言请求是否进入该路由，当请求的`host`有`*.hystrix.com`，都会进入该`router`，该`router`中有一个`hystrix`的`filter`,该`filter`可以配置名称、和指向性`fallback`的逻辑的地址，比如本案例中重定向到了`/fallback`
+
+使用`curl`执行以下命令   
+
+		curl --dump-header - --header Host: www.hystrix.com http://localhost:8080/delay/3
+响应`fallback`
+
+## Spring Cloud Gateway 之Predict篇
+[https://blog.csdn.net/forezp/article/details/84926662](https://blog.csdn.net/forezp/article/details/84926662)
+在之前的文章的`Spring Cloud Gateway`初体验中，对`Spring Cloud Gateway`的功能有一个初步的认识，网关作为一个系统的流量的入口，有着举足轻重的作用，通常的作用如下：
+
+* 协议转换，路由转发
+* 流量聚合，对流量进行监控，日志输出
+* 作为整个系统的前端工程，对流量进行控制，有限流的作用
+* 作为系统的前端边界，外部流量只能通过网关才能访问系统
+* 可以在网关层做权限的判断
+* 可以在网关层做缓存
+`Spring Cloud Gateway`作为`Spring Cloud`框架的第二代网关，在功能上要比`Zuul`更加的强大，性能也更好。随着`Spring Cloud`的版本迭代，`Spring Cloud`官方有打算弃用`Zuul`的意思。在笔者调用了`Spring Cloud Gateway`的使用和功能上，`Spring Cloud Gateway`替换掉`Zuul`的成本上是非常低的，几乎可以无缝切换。`Spring Cloud Gateway`几乎包含了`zuul`的所有功能
+### predicate简介
+`Predicate`来自于`java8`的接口。`Predicate` 接受一个输入参数，返回一个布尔值结果。该接口包含多种默认方法来将`Predicate`组合成其他复杂的逻辑（比如：与，或，非）。可以用于接口请求参数校验、判断新老数据是否有变化需要进行更新操作。`add`–与、`or`–或、`negate`–非  
+`Spring Cloud Gateway`内置了许多`Predict`,这些`Predict`的源码在`org.springframework.cloud.gateway.handler.predicate`包中
+### predicate实战
+
+		dependencies {
+		    implementation 'org.springframework.cloud:spring-cloud-starter-gateway'
+		    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+		}
+### After Route Predicate Factory
+
+`AfterRoutePredicateFactory`，可配置一个时间，当请求的时间在配置时间之后，才交给 `router`去处理。否则则报错，不通过路由。
+
+在工程的`application.yml`配置如下
+
+		server:
+		  port: 8081
+		spring:
+		  profiles:
+		    active: after_route
+		
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: after_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - After=2017-01-20T17:42:47.789-07:00[America/Denver]
+		  profiles: after_route
+
+
+
+在上面的配置文件中，配置了服务的端口为`8081`，配置`spring.profiles.active:after_route`指定了程序的`spring`的启动文件为`after_route`文件。在`application.yml`再建一个配置文件，语法是三个横线，在此配置文件中通过`spring.profiles`来配置文件名，和`spring.profiles.active`一致，然后配置`spring cloud gateway` 相关的配置，`id`标签配置的是`router`的`id`，每个`router`都需要一个唯一的`id`，`uri`配置的是将请求路由到哪里，本案例全部路由到`http://httpbin.org:80/get`。
+
+`predicates：
+After=2017-01-20T17:42:47.789-07:00[America/Denver]` 会被解析成`PredicateDefinition`对象 `（name =After ，args= 2017-01-20T17:42:47.789-07:00[America/Denver]）`。在这里需要注意的是`predicates`的`After`这个配置，遵循的契约大于配置的思想，它实际被`AfterRoutePredicateFactory`这个类所处理，这个`After`就是指定了它的`Gateway web handler`类为`AfterRoutePredicateFactory`，同理，其他类型的`predicate`也遵循这个规则。
+
+当请求的时间在这个配置的时间之后，请求会被路由到`http://httpbin.org:80/get`。
+
+启动工程，在浏览器上访问[http://localhost:8081](http://localhost:8081)，会显示`http://httpbin.org:80/get`返回的结果，此时`gateway`路由到了配置的`uri`。如果我们将配置的时间设置到当前时之后，浏览器会显示`404`，此时证明没有路由到配置的`uri`
+
+### Header Route Predicate Factory
+`Header Route Predicate Factory`需要2个参数，一个是`header`名，另外一个`header`值，该值可以是一个正则表达式。当此断言匹配了请求的`header`名和值时，断言通过，进入到`router`的规则中去
+
+
+		spring:
+		  profiles:
+		    active: header_route
+		
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: header_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - Header=X-Request-Id, \d+
+		  profiles: header_route
+		
+
+在上面的配置中，当请求的`Header`中有`X-Request-Id`的`header`名，且`header`值为数字时，请求会被路由到配置的 `uri`. 
+
+		curl -H 'X-Request-Id:1' localhost:8081
+执行命令后，会正确的返回请求结果，结果省略。如果在请求中没有带上`X-Request-Id`的`header`名，并且值不为数字时，请求就会报`404`，路由没有被正确转发
+
+### Cookie Route Predicate Factory
+`Cookie Route Predicate Factory`需要2个参数，一个时`cookie`名字，另一个时值，可以为正则表达式。它用于匹配请求中，带有该名称的`cookie`和`cookie`匹配正则表达式的请求
+
+		spring:
+		  profiles:
+		    active: cookie_route
+		
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: cookie_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - Cookie=name, forezp
+		  profiles: cookie_route
+		
+在上面的配置中，请求带有`cookie`名为
+`name`, `cookie`值为`forezp` 的请求将都会转发到uri为 `http://httpbin.org:80/get`的地址上。
+使用`curl`命令进行请求，在请求中带上 `cookie`，会返回正确的结果，否则，请求报`404`错误
+
+### Host Route Predicate Factory
+`Host Route Predicate Factory`需要一个参数即`hostname`，它可以使用.` * `等去匹配`host`。这个参数会匹配请求头中的`host`的值，一致，则请求正确转发
+		
+		spring:
+		  profiles:
+		    active: host_route
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: host_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - Host=**.fangzhipeng.com
+		  profiles: host_route
+在上面的配置中，请求头中含有`Host`为`fangzhipeng.com`的请求将会被路由转发转发到配置的`uri`。 启动工程，执行以下的`curl`命令，请求会返回正确的请求结果：
+
+	curl -H Host:www.fangzhipeng.com localhost:8081
+
+### Method Route Predicate Factory
+`Method Route Predicate Factory` 需要一个参数，即请求的类型。比如`GET`类型的请求都转发到此路由。在工程的配置文件加上以下的配置
+
+
+		spring:
+		  profiles:
+		    active: method_route
+		
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: method_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - Method=GET
+		  profiles: method_route
+
+在上面的配置中，所有的`GET`类型的请求都会路由转发到配置的`uri`
+
+### Path Route Predicate Factory
+
+`Path Route Predicate Factory` 需要一个参数: 一个`spel`表达式，应用匹配路径
+
+		spring:
+		  profiles:
+		    active: path_route
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: path_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - Path=/foo/{segment}
+		  profiles: path_route
+		
+在上面的配置中，所有的请求路径满足`/foo/{segment}`的请求将会匹配并被路由，比如`/foo/1` 、`/foo/bar`的请求，将会命中匹配，并成功转发。
+
+### Query Route Predicate Factory
+`Query Route Predicate Factory` 需要2个参数:一个参数名和一个参数值的正则表达式
+
+
+		spring:
+		  profiles:
+		    active: query_route
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: query_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - Query=foo, bar
+		  profiles: query_route
+		
+
+
+在上面的配置文件中，配置了请求中含有参数`foo`，并且`foo`的值匹配`bar`，则请求命中路由，比如一个请求中含有参数名为`foo`，值的为`bar`，能够被正确路由转发。
+
+`Query Route Predicate Factory`也可以只填一个参数，填一个参数时，则只匹配参数名，即请求的参数中含有配置的参数名，则命中路由。比如以下的配置中，配置了请求参数中含有参数名为`foo` 的参数将会被请求转发到`uri`为`http://httpbin.org:80/get`
+
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: query_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - Query=foo
+		  profiles: query_route
+
+## spring cloud gateway之filter篇
+[https://blog.csdn.net/forezp/article/details/85057268](https://blog.csdn.net/forezp/article/details/85057268)
+### filter的作用和生命周期
+由`filter`工作流程点，可以知道`filter`有着非常重要的作用，在`pre`类型的过滤器可以做参数校验、权限校验、流量监控、日志输出、协议转换等，在`post`类型的过滤器中可以做响应内容、响应头的修改，日志的输出，流量监控等。首先需要弄清一点为什么需要网关这一层，这就不得不说下`filter`的作用了。
+
+### 作用
+当我们有很多个服务时，客户端请求各个服务的Api时，每个服务都需要做相同的事情，比如鉴权、限流、日志输出等。对于这样重复的工作，有没有办法做的更好，答案是肯定的。在微服务的上一层加一个全局的权限控制、限流、日志输出的`Api Gatewat`服务，然后再将请求转发到具体的业务服务层。这个`Api Gateway`服务就是起到一个服务边界的作用，外接的请求访问系统，必须先通过网关层。
+### 生命周期
+`Spring Cloud Gateway`同`zuul`类似，有`pre`和`post`两种方式的`filter`。客户端的请求先经过`pre`类型的`filter`，然后将请求转发到具体的业务服务，收到业务服务的响应之后，再经过`post`类型的`filter`处理，最后返回响应到客户端.  
+与`zuul`不同的是，`filter`除了分为`pre`和`post`两种方式的`filter`外，在`Spring Cloud Gateway`中，`filter`从作用范围可分为另外两种，一种是针对于单个路由的`gateway filter`，它在配置文件中的写法同`predict`类似；另外一种是针对于所有路由的`global gateway filer`。现在从作用范围划分的维度来讲解这两种`filter`
+
+### gateway filter
+过滤器允许以某种方式修改传入的HTTP请求或传出的HTTP响应。过滤器可以限定作用在某些特定请求路径上。 `Spring Cloud Gateway`包含许多内置的`GatewayFilter`工厂。
+
+`GatewayFilter`工厂同上一篇介绍的`Predicate`工厂类似，都是在配置文件`application.yml`中配置，遵循了约定大于配置的思想，只需要在配置文件配置`GatewayFilter Factory`的名称，而不需要写全部的类名，比如`AddRequestHeaderGatewayFilterFactory`只需要在配置文件中写`AddRequestHeader`，而不是全部类名。在配置文件中配置的`GatewayFilter Factory`最终都会相应的过滤器工厂类处理.  
+每一个过滤器工厂在官方文档都给出了详细的使用案例，如果不清楚的还可以在`org.springframework.cloud.gateway.filter.factory`看每一个过滤器工厂的源码
+###AddRequestHeader GatewayFilter Factory
+
+		server:
+		  port: 8081
+		spring:
+		  profiles:
+		    active: add_request_header_route
+		
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: add_request_header_route
+		        uri: http://httpbin.org:80/get
+		        filters:
+		        - AddRequestHeader=X-Request-Foo, Bar
+		        predicates:
+		        - After=2017-01-20T17:42:47.789-07:00[America/Denver]
+		  profiles: add_request_header_route
+
+
+在上述的配置中，工程的启动端口为`8081`，配置文件为`add_request_header_route`，在`add_request_header_route`配置中，配置了`router`的`id`为`add_request_header_route`，路由地址为`http://httpbin.org:80/get`，该`router`有`AfterPredictFactory`，有一个`filter`为`AddRequestHeaderGatewayFilterFactory(约定写成AddRequestHeader)`，`AddRequestHeader`过滤器工厂会在请求头加上一对请求头，名称为`X-Request-Foo`，值为`Bar`
+
+### RewritePath GatewayFilter Factory
+在`Nginx`服务启中有一个非常强大的功能就是重写路径，`Spring Cloud Gateway`默认也提供了这样的功能，这个功能是`Zuul`没有的。在配置文件中加上以下的配置
+
+		
+		spring:
+		  profiles:
+		    active: rewritepath_route
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: rewritepath_route
+		        uri: https://blog.csdn.net
+		        predicates:
+		        - Path=/foo/**
+		        filters:
+		        - RewritePath=/foo/(?<segment>.*), /$\{segment}
+		  profiles: rewritepath_route
+
+上面的配置中，所有的`/foo/**`开始的路径都会命中配置的`router`，并执行过滤器的逻辑，在本案例中配置了`RewritePath`过滤器工厂，此工厂将`/foo/(?.*)`重写为`{segment}`，然后转发到`https://blog.csdn.net`。比如在网页上请求[http://localhost:8081/foo/forezp](http://localhost:8081/foo/forezp)，此时会将请求转发到`https://blog.csdn.net/forezp`的页面，比如在网页上请求`localhost:8081/foo/forezp/1`，页面显示`404`，就是因为不存在`https://blog.csdn.net/forezp/1`这个页面。
+
+###自定义过滤器
+`Spring Cloud Gateway`内置了19种强大的过滤器工厂，能够满足很多场景的需求，那么能不能自定义自己的过滤器呢，当然是可以的。在`spring Cloud Gateway`中，过滤器需要实现`GatewayFilter`和`Ordered`2个接口。写一个`RequestTimeFilter`
+
+
+		public class RequestTimeFilter implements GatewayFilter, Ordered {
+		
+		    private static final Log log = LogFactory.getLog(GatewayFilter.class);
+		    private static final String REQUEST_TIME_BEGIN = "requestTimeBegin";
+		
+		    @Override
+		    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+		
+		        exchange.getAttributes().put(REQUEST_TIME_BEGIN, System.currentTimeMillis());
+		        return chain.filter(exchange).then(
+		                Mono.fromRunnable(() -> {
+		                    Long startTime = exchange.getAttribute(REQUEST_TIME_BEGIN);
+		                    if (startTime != null) {
+		                        log.info(exchange.getRequest().getURI().getRawPath() + ": " + (System.currentTimeMillis() - startTime) + "ms");
+		                    }
+		                })
+		        );
+		
+		    }
+		
+		    @Override
+		    public int getOrder() {
+		        return 0;
+		    }
+		}
+在上面的代码中，`Ordered`中的`int getOrder()`方法是来给过滤器设定优先级别的，值越大则优先级越低。还有有一个`filterI(exchange,chain)`方法，在该方法中，先记录了请求的开始时间，并保存在`ServerWebExchange`中，此处是一个`pre`类型的过滤器，然后再`chain.filter`的内部类中的`run()`方法中相当于`post`过滤器，在此处打印了请求所消耗的时间。然后将该过滤器注册到`router`中，代码如下
+
+	    @Bean
+	    public RouteLocator customerRouteLocator(RouteLocatorBuilder builder) {
+	        // @formatter:off
+	        return builder.routes()
+	                .route(r -> r.path("/customer/**")
+	                        .filters(f -> f.filter(new RequestTimeFilter())
+	                                .addResponseHeader("X-Response-Default-Foo", "Default-Bar"))
+	                        .uri("http://httpbin.org:80/get")
+	                        .order(0)
+	                        .id("customer_filter_router")
+	                )
+	                .build();
+	        // @formatter:on
+	    }
+	
+启动程序,访问
+
+	 curl localhost:8081/customer/123
+
+### 自定义过滤器工厂
+
+
+
+	

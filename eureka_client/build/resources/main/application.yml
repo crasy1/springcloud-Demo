@@ -8,7 +8,14 @@ spring:
 eureka:
   client:
     serviceUrl:
-#      defaultZone: http://peer1:8761/eureka/
+      #      defaultZone: http://peer1:8761/eureka/
       defaultZone: http://localhost:8761/eureka/,http://localhost:8889/eureka/,http://localhost:8890/eureka/
 
-
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+      cors:
+        allowed-origins: "*"
+        allowed-methods: "*"

@@ -6,9 +6,9 @@ eureka:
 #    hostname: localhost
     prefer-ip-address: true
   client:
-    #±íÊ¾ÊÇ·ñ×¢²áEureka·şÎñÆ÷,ÒòÎª×ÔÉí×÷Îª·şÎñ×¢²áÖĞĞÄ£¬ËùÒÔÎªfalse
+    #è¡¨ç¤ºæ˜¯å¦æ³¨å†ŒEurekaæœåŠ¡å™¨,å› ä¸ºè‡ªèº«ä½œä¸ºæœåŠ¡æ³¨å†Œä¸­å¿ƒï¼Œæ‰€ä»¥ä¸ºfalse
     registerWithEureka: false
-    #ÊÇ·ñ´ÓeurekaÉÏ»ñÈ¡×¢²áĞÅÏ¢,±íÃ÷×Ô¼ºÊÇÒ»¸öserver
+    #æ˜¯å¦ä»eurekaä¸Šè·å–æ³¨å†Œä¿¡æ¯,è¡¨æ˜è‡ªå·±æ˜¯ä¸€ä¸ªserver
     fetchRegistry: false
     serviceUrl:
       defultZone: http://localhost:8889/eureka/,http://localhost:8890/eureka/
