@@ -1332,7 +1332,304 @@ After=2017-01-20T17:42:47.789-07:00[America/Denver]` 会被解析成`PredicateDe
 	 curl localhost:8081/customer/123
 
 ### 自定义过滤器工厂
+创建一个自定义过滤工厂类,这样就能在配置文件中直接配置过滤器了  
+过滤器工厂的顶级接口是`GatewayFilterFactory`，有2个两个较接近具体实现的抽象类，分别为`AbstractGatewayFilterFactory`和`AbstractNameValueGatewayFilterFactory`，这2个类前者接收一个参数，比如它的实现类`RedirectToGatewayFilterFactory`；后者接收2个参数，比如它的实现类`AddRequestHeaderGatewayFilterFactory`类。现在需要将请求的日志打印出来，需要使用一个参数，这时可以参照`RedirectToGatewayFilterFactory`的写法
 
 
+		public class RequestTimeGatewayFilterFactory extends AbstractGatewayFilterFactory<RequestTimeGatewayFilterFactory.Config> {
+		
+		
+		    private static final Log log = LogFactory.getLog(GatewayFilter.class);
+		    private static final String REQUEST_TIME_BEGIN = "requestTimeBegin";
+		    private static final String KEY = "withParams";
+		
+		    @Override
+		    public List<String> shortcutFieldOrder() {
+		        return Arrays.asList(KEY);
+		    }
+		
+		    public RequestTimeGatewayFilterFactory() {
+		        super(Config.class);
+		    }
+		
+		    @Override
+		    public GatewayFilter apply(Config config) {
+		        return (exchange, chain) -> {
+		            exchange.getAttributes().put(REQUEST_TIME_BEGIN, System.currentTimeMillis());
+		            return chain.filter(exchange).then(
+		                    Mono.fromRunnable(() -> {
+		                        Long startTime = exchange.getAttribute(REQUEST_TIME_BEGIN);
+		                        if (startTime != null) {
+		                            StringBuilder sb = new StringBuilder(exchange.getRequest().getURI().getRawPath())
+		                                    .append(": ")
+		                                    .append(System.currentTimeMillis() - startTime)
+		                                    .append("ms");
+		                            if (config.isWithParams()) {
+		                                sb.append(" params:").append(exchange.getRequest().getQueryParams());
+		                            }
+		                            log.info(sb.toString());
+		                        }
+		                    })
+		            );
+		        };
+		    }
+		
+		
+		    public static class Config {
+		
+		        private boolean withParams;
+		
+		        public boolean isWithParams() {
+		            return withParams;
+		        }
+		
+		        public void setWithParams(boolean withParams) {
+		            this.withParams = withParams;
+		        }
+		
+		    }
+		}
+		
+在上面的代码中 `apply(Config config)`方法内创建了一个`GatewayFilter`的匿名类，具体的实现逻辑跟之前一样，只不过加了是否打印请求参数的逻辑，而这个逻辑的开关是`config.isWithParams()`。静态内部类类`Config`就是为了接收那个`boolean`类型的参数服务的，里边的变量名可以随意写，但是要重写`List shortcutFieldOrder()`这个方法。
+。
 
+需要注意的是，在类的构造器中一定要调用下父类的构造器把`Config`类型传过去，否则会报`ClassCastException`
+
+最后，需要在工程的启动文件`Application`类中，向`Srping Ioc`容器注册`RequestTimeGatewayFilterFactory`类的`Bean`	
+
+
+	    @Bean
+	    public RequestTimeGatewayFilterFactory elapsedGatewayFilterFactory() {
+	        return new RequestTimeGatewayFilterFactory();
+	    }
+
+
+`yml`配置
+
+		spring:
+		  profiles:
+		    active: elapse_route
+		
+		---
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: elapse_route
+		        uri: http://httpbin.org:80/get
+		        filters:
+		        - RequestTime=false
+		        predicates:
+		        - After=2017-01-20T17:42:47.789-07:00[America/Denver]
+		  profiles: elapse_route
+
+
+启动工程，在浏览器上访问[http://localhost:8081?name=forezp](http://localhost:8081?name=forezp)，可以在控制台上看到，日志输出了请求消耗的时间和请求参数。	
+
+### global filter
+`Spring Cloud Gateway`根据作用范围划分为`GatewayFilter`和`GlobalFilter`，二者区别如下：
+
+* `GatewayFilter` : 需要通过`spring.cloud.routes.filters` 配置在具体路由下，只作用在当前路由上或通过`spring.cloud.default-filters`配置在全局，作用在所有路由上
+
+* `GlobalFilter` : 全局过滤器，不需要在配置文件中配置，作用在所有的路由上，最终通过`GatewayFilterAdapter`包装成`GatewayFilterChain`可识别的过滤器，它为请求业务以及路由的`URI`转换为真实业务服务的请求地址的核心过滤器，不需要配置，系统初始化时加载，并作用在每个路由上,`springcloud`中内置的`globalFilter`如下
+
+![](https://i.imgur.com/ilpelpc.png)
+
+上图中每一个`GlobalFilter`都作用在每一个`router`上，能够满足大多数的需求。但是如果遇到业务上的定制，可能需要编写满足自己需求的`GlobalFilter`。在下面的案例中将讲述如何编写自己`GlobalFilter`，该`GlobalFilter`会校验请求中是否包含了请求参数`token`，如何不包含请求参数`token`则不转发路由，否则执行正常的逻辑
+
+		public class TokenFilter implements GlobalFilter, Ordered {
+		
+		    Logger logger=LoggerFactory.getLogger( TokenFilter.class );
+		    @Override
+		    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+		        String token = exchange.getRequest().getQueryParams().getFirst("token");
+		        if (token == null || token.isEmpty()) {
+		            logger.info( "token is empty..." );
+		            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+		            return exchange.getResponse().setComplete();
+		        }
+		        return chain.filter(exchange);
+		    }
+		
+		    @Override
+		    public int getOrder() {
+		        return -100;
+		    }
+		}
+
+
+在上面的`TokenFilter`需要实现`GlobalFilter`和`Ordered`接口，这和实现`GatewayFilter`很类似。然后根据`ServerWebExchange`获取`ServerHttpRequest`，然后根据`ServerHttpRequest`中是否含有参数`token`，如果没有则完成请求，终止转发，否则执行正常的逻辑。
+
+然后需要将`TokenFilter`在工程的启动类中注入到`Spring Ioc`容器中
 	
+		
+		@Bean
+		public TokenFilter tokenFilter(){
+		        return new TokenFilter();
+		}
+
+## spring cloud gateway 之限流篇
+[https://blog.csdn.net/forezp/article/details/85081162](https://blog.csdn.net/forezp/article/details/85081162)
+在高并发的系统中，往往需要在系统中做限流，一方面是为了防止大量的请求使服务器过载，导致服务不可用，另一方面是为了防止网络攻击。
+
+常见的限流方式，比如`Hystrix`适用线程池隔离，超过线程池的负载，走熔断的逻辑。在一般应用服务器中，比如tomcat容器也是通过限制它的线程数来控制并发的；也有通过时间窗口的平均速度来控制流量。常见的限流纬度有比如通过`Ip`来限流、通过`uri`来限流、通过用户访问频次来限流。
+
+一般限流都是在网关这一层做，比如`Nginx`、`Openresty`、`kong`、`zuul`、`Spring Cloud Gateway`等；也可以在应用层通过Aop这种方式去做限流。
+### 令牌桶算法
+
+在令牌桶算法中，存在一个桶，用来存放固定数量的令牌。算法中存在一种机制，以一定的速率往桶中放令牌。每次请求调用需要先获取令牌，只有拿到令牌，才有机会继续执行，否则选择选择等待可用的令牌、或者直接拒绝。放令牌这个动作是持续不断的进行，如果桶中令牌数达到上限，就丢弃令牌，所以就存在这种情况，桶中一直有大量的可用令牌，这时进来的请求就可以直接拿到令牌执行，比如设置qps为100，那么限流器初始化完成一秒后，桶中就已经有100个令牌了，这时服务还没完全启动好，等启动完成对外提供服务时，该限流器可以抵挡瞬时的100个请求。所以，只有桶中没有令牌时，请求才会进行等待，最后相当于以一定的速率执行。  
+**实现思路**：可以准备一个队列，用来保存令牌，另外通过一个线程池定期生成令牌放到队列中，每来一个请求，就从队列中获取一个令牌，并继续执行
+
+### Spring Cloud Gateway限流
+
+在`Spring Cloud Gateway`中，有`Filter`过滤器，因此可以在`pre`类型的`Filter`中自行实现上述三种过滤器。但是限流作为网关最基本的功能，`Spring Cloud Gateway`官方就提供了`RequestRateLimiterGatewayFilterFactory`这个类，适用`Redis`和`lua`脚本实现了令牌桶的方式  
+引入依赖
+
+		dependencies {
+		    implementation 'org.springframework.cloud:spring-cloud-starter-gateway'
+		    implementation 'org.springframework.boot:spring-boot-starter-data-redis-reactive'
+		    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+		}
+
+`yml`
+
+		server:
+		  port: 8081
+		spring:
+		  cloud:
+		    gateway:
+		      routes:
+		      - id: limit_route
+		        uri: http://httpbin.org:80/get
+		        predicates:
+		        - After=2017-01-20T17:42:47.789-07:00[America/Denver]
+		        filters:
+		        - name: RequestRateLimiter
+		          args:
+		            key-resolver: '#{@hostAddrKeyResolver}'
+		            redis-rate-limiter.replenishRate: 1
+		            redis-rate-limiter.burstCapacity: 3
+		  application:
+		    name: gateway-limiter
+		  redis:
+		    host: localhost
+		    port: 6379
+		    database: 0
+
+在上面的配置文件，指定程序的端口为`8081`，配置了 `redis`的信息，并配置了`RequestRateLimiter`的限流过滤器，该过滤器需要配置三个参数：
+
+* `burstCapacity`，令牌桶总容量。
+* `replenishRate`，令牌桶每秒填充平均速率。
+* `key-resolver`，用于限流的键的解析器的 `Bean` 对象的名字。它使用 `SpEL` 表达式根据`#{@beanName}`从 `Spring `容器中获取 `Bean `对象。  
+`KeyResolver`需要实现`resolve`方法，比如根据`Hostname`进行限流，则需要用`hostAddress`去判断。实现完`KeyResolver`之后，需要将这个类的`Bean`注册到`Ioc`容器中
+
+
+		public class HostAddrKeyResolver implements KeyResolver {
+		
+		    @Override
+		    public Mono<String> resolve(ServerWebExchange exchange) {
+		        return Mono.just(exchange.getRequest().getRemoteAddress().getAddress().getHostAddress());
+		    }
+		
+		}
+		
+		 @Bean
+		    public HostAddrKeyResolver hostAddrKeyResolver() {
+		        return new HostAddrKeyResolver();
+		    }
+
+可以根据`uri`去限流，这时`KeyResolver`代码如下：
+
+
+		public class UriKeyResolver  implements KeyResolver {
+		
+		    @Override
+		    public Mono<String> resolve(ServerWebExchange exchange) {
+		        return Mono.just(exchange.getRequest().getURI().getPath());
+		    }
+		
+		}
+		
+		 @Bean
+		    public UriKeyResolver uriKeyResolver() {
+		        return new UriKeyResolver();
+		    }
+		
+		 
+也可以以用户的维度去限流：
+	
+	
+	   @Bean
+	    KeyResolver userKeyResolver() {
+	        return exchange -> Mono.just(exchange.getRequest().getQueryParams().getFirst("user"));
+	    }
+
+
+
+用`jmeter`进行压测，配置`10thread`去循环请求[http://lcoalhost:8081](http://lcoalhost:8081)，循环间隔1s。从压测的结果上看到有部分请求通过，由部分请求失败。通过`redis`客户端去查看`redis`中存在的`key`
+
+## spring cloud gateway之服务注册与发现
+[https://blog.csdn.net/forezp/article/details/85210153](https://blog.csdn.net/forezp/article/details/85210153)
+
+### 工程介绍
+
+		工程名	          端口	      作用
+		eureka-server	8761	注册中心eureka server
+		eureka-client   8762	服务提供者 eurka client
+		gateway-service	8081	路由网关 eureka client
+
+其中`eureka-client`、`gateway-service`向注册中心`eureka-server`注册。用户的请求首先经过`gateway-service`，根据路径由`gateway`的`predict` 去断言进到哪一个` router`， `router`经过各种过滤器处理后，最后路由到具体的业务服务，比如 `eureka-client`  
+
+1. 使用之前的`eureka-server`,`eureka-client`模块
+2. 新建`gateway-service`模块,引入依赖
+		
+		
+		dependencies {
+		    implementation 'org.springframework.cloud:spring-cloud-starter-gateway'
+		    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+		    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+		}
+
+`yml`
+
+		server:
+		  port: 8081
+		
+		spring:
+		  application:
+		    name: sc-gateway-service
+		  cloud:
+		    gateway:
+		      discovery:
+		        locator:
+		          enabled: true
+		          lowerCaseServiceId: true
+		          
+		eureka:
+		  client:
+		    service-url:
+		      defaultZone: http://localhost:8761/eureka/
+		
+其中，`spring.cloud.gateway.discovery.locator.enabled`为`true`，表明`gateway`开启服务注册和发现的功能，并且`spring cloud gateway`自动根据服务发现为每一个服务创建了一个`router`，这个`router`将以服务名开头的请求路径转发到对应的服务。`spring.cloud.gateway.discovery.locator.lowerCaseServiceId`是将请求路径上的服务名配置为小写（因为服务注册的时候，向注册中心注册时将服务名转成大写的了），比如以`/eureka-client/*`的请求路径被路由转发到服务名为`eureka-client`的服务上,访问[http://localhost:8081/eureka-client/hi?name=1323](http://localhost:8081/eureka-client/hi?name=1323),可以访问.  
+**自定义请求路径**  
+
+		spring:
+		  application:
+		    name: sc-gateway-server
+		  cloud:
+		    gateway:
+		      discovery:
+		        locator:
+		          enabled: false
+		          lowerCaseServiceId: true
+		      routes:
+		      - id: service-hi
+		        uri: lb://SERVICE-HI
+		        predicates:
+		          - Path=/demo/**
+		        filters:
+		          - StripPrefix=1
+		         
+在上面的配置中，配置了一个`Path` 的`predict`,将以`/demo/**`开头的请求都会转发到`uri`为`lb://EUREKA-CLIENT`的地址上，`lb://EUREKA-CLIENT`即`eureka-client`服务的负载均衡地址，并用`StripPrefix`的`filter` 在转发之前将`/demo`去掉。同时将`spring.cloud.gateway.discovery.locator.enabled`改为`false`，如果不改的话，之前的`localhost:8081/eureka-client/hi?name=1323`这样的请求地址也能正常访问，因为这时为每个服务创建了2个`router`。
+
+在浏览器上请求[http://localhost:8081/demo/hi?name=1323](http://localhost:8081/demo/hi?name=1323)

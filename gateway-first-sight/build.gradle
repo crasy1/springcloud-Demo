@@ -15,9 +15,6 @@ configurations {
     }
 }
 
-repositories {
-    mavenCentral()
-}
 
 ext {
     set('springCloudVersion', "Greenwich.SR1")
